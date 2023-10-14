@@ -12,7 +12,10 @@
   },
   "tauri": {
     "allowlist": {
-      "all": false
+      "all": false,
+      "process": {
+        "all": true
+      }
     },
     "bundle": {
       "active": true,
@@ -48,7 +51,13 @@
       }
     },
     "security": {
-      "csp": null
+      "csp": null,
+      "dangerousRemoteDomainIpcAccess": [{
+        "domain": "*",
+        "windows": [
+          "all"
+        ]
+      }]
     },
     "updater": {
       "active": false
