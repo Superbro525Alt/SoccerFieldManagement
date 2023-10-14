@@ -3,7 +3,7 @@
       import {Button, ButtonGroup, Card} from "flowbite-svelte";
       import {ArrowRightOutline} from "flowbite-svelte-icons";
       import { exit } from '@tauri-apps/api/process';
-      import {onMount} from "svelte";
+      import { listen } from '@tauri-apps/api/event';
 
       interface port {
         path: string;
@@ -15,8 +15,11 @@
       let current_port: port | null = null;
       let displayed_ports: string[] = [];
       let connected: boolean = false;
+      let serial_out: any = [];
+      let unlisten: any;
 
       let canvas;
+      let terminal;
 
 
       function init_ports() {
@@ -29,6 +32,8 @@
 
       function init_port(_port: port) {
           _port.opened_port = new Serialport({path: _port.path, baudRate: _port.baudRate});
+
+          open_port(_port);
       }
 
       function connect(_port: port, init: boolean = false) {
@@ -307,6 +312,30 @@
             await exit(0)
         }
 
+        function update_terminal() {
+            if (connected) {
+                current_port.opened_port?.read();
+            }
+        }
+
+        function create_serial_listener() {
+            unlisten = listen('plugin-serialport-read-' + current_port.path, (event) => {
+                // convert array like 84,101,115,116,13,10 to Test
+                let str = String.fromCharCode.apply(event.payload.data, event.payload.data);
+
+
+                //strip /n and /r
+                str = str.replace(/(\r\n|\n|\r)/gm, "");
+
+                serial_out += str;
+
+                console.log(serial_out)
+                terminal.scrollTop = terminal.scrollHeight;
+            });
+        }
+
+
+
         update_dynamic();
 
         //render_field();
@@ -326,7 +355,7 @@
           <h5 class="mb-2 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Available Connection</h5>
     <p class="mb-3 font-normal text-gray-700 dark:text-gray-400 leading-tight">Port: {port}</p>
 
-        <Button class="w-fit" on:click={() => {current_port = connect({path: port, baudRate: 9600, opened_port: null}, true); connected=true; setTimeout(render_field, 1000)}}>
+        <Button class="w-fit" on:click={() => {current_port = connect({path: port, baudRate: 9600, opened_port: null}, true); connected=true; setTimeout(() => {render_field();update_terminal();create_serial_listener();}, 1000);}}>
             Read Serial <ArrowRightOutline class="w-3.5 h-3.5 ml-2 text-white" />
         </Button>
     </Card>
@@ -355,6 +384,13 @@
         </canvas>
         <br/>
 
+        <!-- create a terminal -->
+        <div bind:this={terminal} class="terminal center-margin">
+            {serial_out}
+        </div>
+
+        <br/>
+
 
 
     <ButtonGroup divClass="full-width" size="xl">
@@ -377,5 +413,13 @@
 
     canvas {
         border: solid 10px #060;
+    }
+
+    .terminal {
+
+        background-color: #000;
+        color: #FFF;
+        height: 200px;
+        overflow-y: scroll;
     }
 </style>
