@@ -11,7 +11,7 @@ RF24Network network(radio);
 const uint16_t nodeRX = 00;
 
 
-String dataReceived; // this must match dataToSend in the TX
+int dataReceived; // this must match dataToSend in the TX
 //invio un int così dal numero so chi lo ha inviato
 bool newData = false;
 
@@ -38,8 +38,8 @@ void loop()
   {
     RF24NetworkHeader header;
     network.read(header, &dataReceived, sizeof(dataReceived));
-    StringSplitter *splitter = new StringSplitter(dataReceived, ' ', 3);
-    Serial.println(dataReceived);
+    StringSplitter *splitter = new StringSplitter(dataReceived, ' ', 1);
+    Serial.println(dataReceived); 
     switch (splitter->getItemAtIndex(0).toInt())
     {
       case 1: Serial.println("From TX1");

@@ -43,9 +43,9 @@ void loop()
 GPS.newNMEAreceived(); //This will return a boolean TRUE/FALSE depending on the case.
 
   if (GPS.fix) {
-    dataToSend = id + " " + GPS.fix + String(" ") + GPS.lat + String(" ") + GPS.lon;
+    dataToSend = (String)id + " " + (String)GPS.fix;// + String(" ") + GPS.lat + String(" ") + GPS.lon;
   } else {
-    dataToSend = id + " " + GPS.fix + String(" none none");
+    dataToSend = (String)id + " " + (String)GPS.fix;// + String(" none none");
   }
   network.update();
   
@@ -57,15 +57,16 @@ GPS.newNMEAreceived(); //This will return a boolean TRUE/FALSE depending on the 
 void sendData() {
 
   bool rslt;
+  Serial.println(dataToSend);
   RF24NetworkHeader header(nodeRX); //(nodo destinatario)
   rslt = network.write(header, &dataToSend, sizeof(dataToSend));
   
   if (rslt) 
   {
-    Serial.println("  Acknowledge received");
+    //Serial.println("  Acknowledge received");
   }
   else
   {
-    Serial.println("  Tx failed");
+    //Serial.println("  Tx failed");
   }
 }
