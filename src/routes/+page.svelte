@@ -17,6 +17,7 @@
       let connected: boolean = false;
       let serial_out: any = [];
       let unlisten: any;
+      let _serial_out: any = {};
 
       let canvas;
       let terminal;
@@ -37,11 +38,14 @@
       }
 
       function connect(_port: port, init: boolean = false) {
-          ports.push(_port);
-          if (init) {
-              init_port(_port);
+          try {
+              ports.push(_port);
+              if (init) {
+                  init_port(_port);
+              }
+          } catch (e) {
+                console.log(e);
           }
-
           return _port;
       }
 
@@ -60,7 +64,13 @@
       }
 
       function open_port(_port: port) {
-            _port.opened_port?.open();
+          // if port already opened
+          try {
+              close_port(_port.opened_port);
+              _port.opened_port?.open();
+          } catch (e) {
+              console.log(e);
+          }
       }
 
       function open_all_ports() {
@@ -87,6 +97,10 @@
                 let ctx = canvas.getContext("2d");
                 // draw a soccer field
                 var pitch = {
+                    center: {
+                        lat: 0,
+                        lon: 0
+                    },
                     draw: function () {
 
                         // Outer lines
@@ -202,32 +216,26 @@
                 };
 
                 var ball = {
-                    x: 10,
-                    y: 10,
+                    x: 0,
+                    y: 0,
                     speed: 100,
                     target: {
                         x: 0,
                         y: 0
                     },
                     move: function () {
-                        console.log(this);
-                        const h = Math.sqrt(Math.pow(Math.abs(this.x - this.target.x), 2) + Math.pow(Math.abs(this.y - this.target.y), 2));
-                        const v = Math.acos((Math.abs(this.x - this.target.x) / h));
-
-                        const x = ((this.speed / 20) + 1) * Math.cos(v);
-                        const y = ((this.speed / 20) + 1) * Math.sin(v);
-
-                        this.speed = this.speed * 0.98;
-
-                        if (this.target.x >= this.x && this.target.y >= this.y) {
-                            this.setPosition(this.x + x, this.y + y);
-                        } else if (this.target.x >= this.x && this.target.y < this.y) {
-                            this.setPosition(this.x + x, this.y - y);
-                        } else if (this.target.x < this.x && this.target.y >= this.y) {
-                            this.setPosition(this.x - x, this.y + y);
-                        } else if (this.target.x < this.x && this.target.y < this.y) {
-                            this.setPosition(this.x - x, this.y - y);
+                        let temp_data = serial_out.ball;
+                        let coord = {
+                            lon: temp_data[3],
+                            lat: temp_data[4]
                         }
+
+                        console.log(coord);
+
+                        // convert the lat and lon to relative x and y positions based on the pitch center lat and lon
+                        this.x = (coord.lon - pitch.center.lon) * 100;
+                        this.y = (coord.lat - pitch.center.lat) * 100;
+
                         this.draw();
                     },
                     draw: function () {
@@ -241,67 +249,102 @@
                     }
                 };
 
-                var player = {
-                    team: "home",
-                    speed: 1.5,
-                    x: 10,
-                    y: 10,
-                    isAt: function (point) {
-                        return Math.abs(this.x - point.x) < 1 ? (Math.abs(this.y - point.y) < 1 ? true : false) : false;
-                    },
-                    move: function (point) {
-                        if (!this.isAt(point)) {
+                class player {
+                    team;
+                    id;
+                    pitch;
+                    x;
+                    y;
+                    constructor(team, id) {
+                        this.team = team;
+                        this.id = id;
 
-                            var h = Math.sqrt(Math.pow(Math.abs(this.x - point.x), 2) + Math.pow(Math.abs(this.y - point.y), 2));
-                            var v = Math.acos((Math.abs(this.x - point.x) / h));
-                            var x = this.speed * Math.cos(v);
-                            var y = this.speed * Math.sin(v);
+                        this.pitch = pitch;
+                    }
 
-                            if (point.x >= this.x && point.y >= this.y) {
-                                this.x += x;
-                                this.y += y;
-                            } else if (point.x >= this.x && point.y < this.y) {
-                                this.x += x;
-                                this.y -= y;
-                            } else if (point.x < this.x && point.y >= this.y) {
-                                this.x -= x;
-                                this.y += y;
-                            } else if (point.x < this.x && point.y < this.y) {
-                                this.x -= x;
-                                this.y -= y;
-                            }
-                            this.draw();
-                        }
-                    },
-                    draw: function () {
-                        pitch.draw();
+                    update() {
+                        this.x = (serial_out.players[this.id][3] - this.pitch.center.lon) * 100;
+                        this.y = (serial_out.players[this.id][4] - this.pitch.center.lat) * 100;
+
+                        this.draw();
+                    }
+
+                    draw() {
                         ctx.beginPath();
                         ctx.arc(this.x, this.y, 3, 0, 2 * Math.PI, false);
-                        ctx.fillStyle = ((this.team === "home") ? "#00F" : "#F00");
+                        ctx.fillStyle = ((this.team === "red") ? "#00F" : "#F00");
                         ctx.fill();
                         ctx.strokeStyle = "#000";
                         ctx.stroke();
                         ctx.closePath();
                     }
-                };
-                ball.draw();
-                //player.draw();
-                var coordinates = [
-                    {x: 200, y: 259},
-                    {x: 230, y: 229},
-                    {x: 290, y: 289},
-                    {x: 550, y: 289},
-                    {x: 400, y: 320},
-                    {x: 200, y: 259}
-                ];
+
+                }
+
+                // var player = {
+                //     team: "home",
+                //     speed: 1.5,
+                //     x: 10,
+                //     y: 10,
+                //     isAt: function (point) {
+                //         return Math.abs(this.x - point.x) < 1 ? (Math.abs(this.y - point.y) < 1 ? true : false) : false;
+                //     },
+                //     move: function (point) {
+                //         if (!this.isAt(point)) {
+                //
+                //             var h = Math.sqrt(Math.pow(Math.abs(this.x - point.x), 2) + Math.pow(Math.abs(this.y - point.y), 2));
+                //             var v = Math.acos((Math.abs(this.x - point.x) / h));
+                //             var x = this.speed * Math.cos(v);
+                //             var y = this.speed * Math.sin(v);
+                //
+                //             if (point.x >= this.x && point.y >= this.y) {
+                //                 this.x += x;
+                //                 this.y += y;
+                //             } else if (point.x >= this.x && point.y < this.y) {
+                //                 this.x += x;
+                //                 this.y -= y;
+                //             } else if (point.x < this.x && point.y >= this.y) {
+                //                 this.x -= x;
+                //                 this.y += y;
+                //             } else if (point.x < this.x && point.y < this.y) {
+                //                 this.x -= x;
+                //                 this.y -= y;
+                //             }
+                //             this.draw();
+                //         }
+                //     },
+                //     draw: function () {
+                //         pitch.draw();
+                //         ctx.beginPath();
+                //         ctx.arc(this.x, this.y, 3, 0, 2 * Math.PI, false);
+                //         ctx.fillStyle = ((this.team === "home") ? "#00F" : "#F00");
+                //         ctx.fill();
+                //         ctx.strokeStyle = "#000";
+                //         ctx.stroke();
+                //         ctx.closePath();
+                //     }
+                // };
+                try {
+                    pitch.draw();
+
+                    let players = [];
+                    for (let i = 0; i < _serial_out.players.length; i++) {
+                        players[i] = new player(_serial_out.players[i][0] == "0" ? "red" : "blue", i);
+                    }
+                    ball.draw();
+                    //player.draw();
+
+                    for (let i = 0; i < _serial_out.players.length; i++) {
+                        players[i].draw();
+                    }
+                } catch (e) {
+                    console.log(e);
+                }
 
 
-                pitch.draw();
 
 
 
-
-                return current_port.path;
             }
 
         }
@@ -319,6 +362,7 @@
         }
 
         function create_serial_listener() {
+          console.log("Reading...");
             unlisten = listen('plugin-serialport-read-' + current_port.path, (event) => {
                 // convert array like 84,101,115,116,13,10 to Test
                 let str = String.fromCharCode.apply(event.payload.data, event.payload.data);
@@ -327,10 +371,18 @@
                 //strip /n and /r
                 str = str.replace(/(\r\n|\n|\r)/gm, "");
 
-                serial_out += str;
+
+                if (str.split()[0] == "0" || str.split()[0] == "1") {
+                    _serial_out.players[str.split()[1]] = str.split();
+                } else {
+                    _serial_out.ball = str.split();
+                }
+                serial_out += str + " ";
 
                 console.log(serial_out)
                 terminal.scrollTop = terminal.scrollHeight;
+
+
             });
         }
 
@@ -355,7 +407,7 @@
           <h5 class="mb-2 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Available Connection</h5>
     <p class="mb-3 font-normal text-gray-700 dark:text-gray-400 leading-tight">Port: {port}</p>
 
-        <Button class="w-fit" on:click={() => {current_port = connect({path: port, baudRate: 9600, opened_port: null}, true); connected=true; setTimeout(() => {render_field();update_terminal();create_serial_listener();}, 1000);}}>
+        <Button class="w-fit" on:click={() => {current_port = connect({path: port, baudRate: 9600   , opened_port: null}, true); connected=true; setTimeout(() => {create_serial_listener();render_field();update_terminal();}, 1000);}}>
             Read Serial <ArrowRightOutline class="w-3.5 h-3.5 ml-2 text-white" />
         </Button>
     </Card>
