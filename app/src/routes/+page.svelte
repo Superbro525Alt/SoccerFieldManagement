@@ -1,16 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { Serialport } from "tauri-plugin-serialport-api";
   import { Button, ButtonGroup, Card } from "flowbite-svelte";
   import { ArrowRightOutline } from "flowbite-svelte-icons";
   import { exit } from '@tauri-apps/api/process';
-  import type { UnlistenFn } from '@tauri-apps/api/event';
   import { listen } from '@tauri-apps/api/event';
-
-  interface Port {
-    path: string;
-    baudRate: number;
-    opened_port: Serialport | null;
-  }
 
   interface PlayerData {
     team: number;
@@ -24,59 +18,436 @@
     lat: number;
   }
 
-  interface GoalData {
-    corners: { lat: number, lon: number }[];
-  }
-
   interface SerialData {
     players: PlayerData[];
     ball: BallData;
-    goals: GoalData[];
   }
 
-  let ports: Port[] = [];
-  let current_port: Port | null = null;
-  let displayed_ports: string[] = [];
   let connected: boolean = false;
-  let serial_out: string[] = [];
-  let unlisten: UnlistenFn | null = null;
-  let _serial_out: SerialData = { players: [], ball: { lon: 0, lat: 0 }, goals: [] };
+  let serial_out: SerialData = { players: [], ball: { lon: 0, lat: 0 } };
+  let _serial_out: SerialData = { players: [], ball: { lon: 0, lat: 0 } };
 
   let canvas: HTMLCanvasElement;
   let terminal: HTMLDivElement;
+  let current_port: Serialport | null = null;
+  let displayed_ports: string[] = [];
 
-  function init_ports(): void {
-    ports.forEach(port => {
-      if (port.opened_port == null) {
-        port.opened_port = new Serialport({ path: port.path, baudRate: port.baudRate });
-      }
-    });
-  }
+  let animationStartTime: number; // Variable to store the animation start time
 
-  function init_port(port: Port): void {
-    port.opened_port = new Serialport({ path: port.path, baudRate: port.baudRate });
-    open_port(port);
-  }
+  let current_positions = {
+    players: new Map<number, Player>(),
+    ball: null as Ball | null,
+  };
 
-  function connect(port: Port, init: boolean = false): Port {
+  async function connect(port: string) {
+    if (port === "Example Connection") {
+      connected = true;
+      setInterval(simulate_serial_data, 500);
+      return;
+    }
     try {
-      ports.push(port);
-      if (init) {
-        init_port(port);
-      }
+      current_port = new Serialport({ path: port, baudRate: 9600 });
+      await current_port.open();
+      connected = true;
+      create_serial_listener();
     } catch (e) {
       console.log(e);
     }
-    return port;
   }
 
-  function send_data(port: Port, data: string): void {
-    port.opened_port?.write(data);
+  function latLonToCanvas(lat: number, lon: number, center: { lat: number; lon: number }, canvas: HTMLCanvasElement): { x: number; y: number } {
+  // Scaling factor for 0.01 degrees to 100 meters
+  const scaleFactor = 1000000;
+
+  // Calculate the x and y positions
+  let x = (lon - center.lon) * scaleFactor + (canvas.width / 2);
+  let y = (lat - center.lat) * scaleFactor + (canvas.height / 2);
+
+  // Ensure x and y do not go off the canvas
+  x = Math.max(0, Math.min(x, canvas.width));
+  y = Math.max(0, Math.min(y, canvas.height));
+
+  return { x, y };
+}
+
+  function animate() {
+    if (!canvas) {
+      setTimeout(() => {
+        requestAnimationFrame(animate);
+      }, 1000);
+      return;
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const pitch = {
+      center: { lat: 0, lon: 0 },
+      draw: function (): void {
+        const scaleFactor = 10;
+        ctx.beginPath();
+        ctx.rect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#060";
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#FFF";
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.fillStyle = "#FFF";
+        ctx.beginPath();
+        ctx.moveTo(canvas.width / 2, 0);
+        ctx.lineTo(canvas.width / 2, canvas.height);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(canvas.width / 2, canvas.height / 2, 9.15 * scaleFactor, 0, 2 * Math.PI, false);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(canvas.width / 2, canvas.height / 2, 2, 0, 2 * Math.PI, false);
+        ctx.fill();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.rect(0, (canvas.height - 322) / 2, 132, 322);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.rect(0, (canvas.height - 146) / 2, 44, 146);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.moveTo(1, (canvas.height / 2) - 22);
+        ctx.lineTo(1, (canvas.height / 2) + 22);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.closePath();
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.arc(88, canvas.height / 2, 1, 0, 2 * Math.PI, true);
+        ctx.fill();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(88, canvas.height / 2, 73, 0.29 * Math.PI, 1.71 * Math.PI, true);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.rect(canvas.width - 132, (canvas.height - 322) / 2, 132, 322);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.rect(canvas.width - 44, (canvas.height - 146) / 2, 44, 146);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.moveTo(canvas.width - 1, (canvas.height / 2) - 22);
+        ctx.lineTo(canvas.width - 1, (canvas.height / 2) + 22);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.closePath();
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.arc(canvas.width - 88, canvas.height / 2, 1, 0, 2 * Math.PI, true);
+        ctx.fill();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(canvas.width - 88, canvas.height / 2, 73, 0.71 * Math.PI, 1.29 * Math.PI, false);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, 0.5 * Math.PI, false);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(0, canvas.height, 8, 0, 2 * Math.PI, true);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(canvas.width, 0, 8, 0.5 * Math.PI, 1 * Math.PI, false);
+        ctx.stroke();
+        ctx.closePath();
+
+        ctx.beginPath();
+        ctx.arc(canvas.width, canvas.height, 8, 1 * Math.PI, 1.5 * Math.PI, false);
+        ctx.stroke();
+        ctx.closePath();
+      }
+    };
+
+    pitch.draw();
+
+    class Ball {
+      x: number;
+      y: number;
+      targetX: number;
+      targetY: number;
+
+      constructor(x: number, y: number) {
+        this.x = x;
+        this.y = y;
+        this.targetX = x;
+        this.targetY = y;
+      }
+
+      move(): void {
+        const coord = latLonToCanvas(_serial_out.ball.lat, _serial_out.ball.lon, pitch.center, canvas);
+        this.targetX = coord.x;
+        this.targetY = coord.y;
+      }
+
+      updatePosition() {
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        this.x += dx * 0.1;
+        this.y += dy * 0.1;
+        this.draw();
+      }
+
+      draw(): void {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 6, 0, 2 * Math.PI, false);
+        ctx.fillStyle = "#FFF";
+        ctx.fill();
+        ctx.strokeStyle = "#000";
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
+
+    class Player {
+      team: number;
+      id: number;
+      x: number;
+      y: number;
+      targetX: number;
+      targetY: number;
+
+      constructor(team: number, id: number, x: number, y: number) {
+        this.team = team;
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.targetX = x;
+        this.targetY = y;
+      }
+
+      move(): void {
+        const playerData = _serial_out.players.find(p => p.id === this.id && p.team === this.team);
+        if (playerData) {
+          const coord = latLonToCanvas(playerData.lat, playerData.lon, pitch.center, canvas);
+          this.targetX = coord.x;
+          this.targetY = coord.y;
+        }
+      }
+
+      updatePosition() {
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        this.x += dx * 0.1;
+        this.y += dy * 0.1;
+        this.draw();
+      }
+
+      draw(): void {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 10, 0, 2 * Math.PI, false);
+        ctx.fillStyle = (this.team === 0) ? "#00F" : "#F00";
+        ctx.fill();
+        ctx.strokeStyle = "#000";
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
+
+    const players: Player[] = [];
+    _serial_out.players.forEach(p => {
+      let player = current_positions.players.get(p.id);
+      if (!player) {
+        const coord = latLonToCanvas(p.lat, p.lon, pitch.center, canvas);
+        player = new Player(p.team, p.id, coord.x, coord.y);
+        current_positions.players.set(p.id, player);
+      }
+      player.move();
+      players.push(player);
+    });
+
+    if (!current_positions.ball) {
+      const ballCoord = latLonToCanvas(_serial_out.ball.lat, _serial_out.ball.lon, pitch.center, canvas);
+      current_positions.ball = new Ball(ballCoord.x, ballCoord.y);
+    }
+
+    current_positions.ball.move();
+
+    players.forEach(player => player.updatePosition());
+    current_positions.ball.updatePosition();
+
+    requestAnimationFrame(animate);
   }
 
-  function get_data(port: Port): void {
-    port.opened_port?.read().then(data => {
-      console.log(data);
+  function create_serial_listener(): void {
+    console.log("Reading...");
+    listen(`plugin-serialport-read-${current_port?.path}`, (event: { payload: unknown }) => {
+      const payload = event.payload as { data: number[] };
+      const str = String.fromCharCode.apply(null, payload.data);
+      const lines = str.split('\n');
+
+      lines.forEach(line => {
+        line = line.trim();
+        const parts = line.split(',');
+        if (parts.length > 0) {
+          const type = parts[0];
+          switch (type) {
+            case 'red_team':
+            case 'blue_team':
+              const playerData: PlayerData = {
+                team: type === 'red_team' ? 0 : 1,
+                id: parseInt(parts[1]),
+                lon: parseFloat(parts[2]),
+                lat: parseFloat(parts[3]),
+              };
+              const existingPlayerIndex = _serial_out.players.findIndex(p => p.team === playerData.team && p.id === playerData.id);
+              if (existingPlayerIndex > -1) {
+                _serial_out.players[existingPlayerIndex] = playerData;
+              } else {
+                _serial_out.players.push(playerData);
+              }
+              break;
+            case 'ball':
+              _serial_out.ball = {
+                lon: parseFloat(parts[1]),
+                lat: parseFloat(parts[2]),
+              };
+              break;
+            default:
+              break;
+          }
+        }
+      });
+
+      serial_out = _serial_out; // Update the serial_out object
+      console.log(serial_out); // Log the updated serial_out object
+    }).then(unlistener => {
+      // unlisten = unlistener;
+    });
+  }
+
+  async function quit(): Promise<void> {
+    console.log("quit");
+    await exit(0);
+  }
+
+  function simulate_serial_data(): void {
+  if (!animationStartTime) {
+    animationStartTime = Date.now();
+  }
+
+  const elapsedTime = Date.now() - animationStartTime;
+  const animationDuration = 10000; // 10 seconds in milliseconds
+
+  // Calculate progress from 0 to 1 based on elapsed time
+  const progress = Math.min(elapsedTime / animationDuration, 1);
+
+  // Constants for initial positions and field dimensions
+  const fieldWidth = canvas.width;
+  const fieldHeight = canvas.height;
+  const fieldCenter = { lat: 0, lon: 0 }; // Center at 0 lat, 0 lon
+  const playerStartDistance = 110000; // Distance from center to players in meters
+  const ballStartDistance = 55000; // Distance from center to ball in meters
+
+  // Initial positions in lat lon
+  const initialPlayer1 = {
+    lon: 0.0004,
+    lat: 0
+  };
+
+  const initialPlayer2 = {
+    lon: -0.0004,
+    lat: 0
+  };
+
+  const initialBall = {
+    lon: 0,
+    lat: 0
+  };
+
+  // Calculate current positions based on progress
+  let player1: PlayerData = {
+    team: 0,
+    id: 1,
+    lon: initialPlayer1.lon + (fieldCenter.lon - initialPlayer1.lon + 0.0002) * progress * (progress > 0.5 ? 0.5 : 1),
+    lat: initialPlayer1.lat + (fieldCenter.lat - initialPlayer1.lat + 0.00002) * progress
+  };
+
+  let player2: PlayerData = {
+    team: 1,
+    id: 2,
+    lon: initialPlayer2.lon + (fieldCenter.lon - initialPlayer2.lon) * progress,
+    lat: initialPlayer2.lat + (fieldCenter.lat - initialPlayer2.lat) * progress
+  };
+
+  let ball: BallData = {
+    lon: initialBall.lon + (fieldCenter.lon - initialBall.lon) * progress,
+    lat: initialBall.lat + (fieldCenter.lat - initialBall.lat) * progress
+  };
+
+  // Player 1 moves towards the center of the field
+  // if (progress < 0.5) {
+  //   const centerLon = 0;
+  //   const centerLat = 0;
+  //   player1.lon = initialPlayer1.lon + (centerLon - initialPlayer1.lon) * progress * 3;
+  //   player1.lat = initialPlayer1.lat + (centerLat - initialPlayer1.lat) * progress * 2;
+  // }
+
+  // Ball moves towards player 2 after player 1 reaches the center
+  // if (progress >= 0.5 && progress < 0.75) {
+  //   const player2Position = {
+  //     lon: initialPlayer2.lon + (fieldCenter.lon - initialPlayer2.lon) * progress,
+  //     lat: initialPlayer2.lat + (fieldCenter.lat - initialPlayer2.lat) * progress
+  //   };
+  //
+  //   ball = {
+  //     lon: ball.lon + (player2Position.lon - player1.lon) * (progress - 0.5) * 2,
+  //     lat: ball.lat + (player2Position.lat - player1.lat) * (progress - 0.5) * 2
+  //   };
+  // }
+
+  // Player 2 kicks the ball out towards the top edge after stopping it
+  if (progress == 1) {
+    ball = {
+      lon: 0.00006,
+      lat: 0.00004
+    };
+  }
+
+  // Update serial_out with current positions
+  _serial_out = {
+    players: [player1, player2],
+    ball: ball
+  };
+  serial_out = _serial_out;
+}
+ 
+  function update_dynamic(): void {
+    get_open_ports().then(data => {
+      displayed_ports = data;
+      displayed_ports.push("Example Connection"); // Adding mock example connection
     });
   }
 
@@ -85,344 +456,11 @@
     return availablePorts;
   }
 
-  function open_port(port: Port): void {
-    try {
-      port.opened_port?.close();
-      port.opened_port?.open();
-    } catch (e) {
-      console.log(e);
-    }
-  }
+  update_dynamic(); // Fetch available ports when the app starts
 
-  function open_all_ports(): void {
-    ports.forEach(open_port);
-  }
-
-  function close_port(port: Port | null): void {
-    port?.opened_port?.close();
-    current_port = null;
-    connected = false;
-  }
-
-  function update_dynamic(): void {
-    get_open_ports().then(data => {
-      displayed_ports = data;
-      displayed_ports.push("Example Connection"); // Adding mock example connection
-    });
-  }
-
-  function parse_serial_data(data: string): void {
-    const lines = data.split('\n');
-    lines.forEach(line => {
-      line = line.trimStart();
-      const parts = line.split(' ');
-      if (parts.length > 0) {
-        const type = parts[0];
-        switch (type) {
-          case 'player':
-            _serial_out.players.push({
-              team: parseInt(parts[1]),
-              id: parseInt(parts[2]),
-              lon: parseFloat(parts[3]),
-              lat: parseFloat(parts[4]),
-            });
-            break;
-          case 'ball':
-            _serial_out.ball = {
-              lon: parseFloat(parts[1]),
-              lat: parseFloat(parts[2]),
-            };
-            break;
-          case 'goal':
-            const goalCorners = [
-              { lon: parseFloat(parts[1]), lat: parseFloat(parts[2]) },
-              { lon: parseFloat(parts[3]), lat: parseFloat(parts[4]) },
-              { lon: parseFloat(parts[5]), lat: parseFloat(parts[6]) },
-              { lon: parseFloat(parts[7]), lat: parseFloat(parts[8]) },
-            ];
-            _serial_out.goals.push({ corners: goalCorners });
-            break;
-        }
-      }
-    });
-  }
-
-  function latLonToCanvas(lat: number, lon: number, center: { lat: number, lon: number }, canvas: HTMLCanvasElement): { x: number, y: number } {
-    const x = (lon - center.lon) + (canvas.width / 2);
-    const y = (lat - center.lat) + (canvas.height / 2);
-    return { x, y };
-  }
-
-  function render_field(): void {
-    if (connected && canvas) {
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      const pitch = {
-        center: { lat: 0, lon: 0 },
-        draw: function (): void {
-          if (canvas == null) { return; };
-          ctx.beginPath();
-          ctx.rect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = "#060";
-          ctx.fill();
-          ctx.lineWidth = 1;
-          ctx.strokeStyle = "#FFF";
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.fillStyle = "#FFF";
-          ctx.beginPath();
-          ctx.moveTo(canvas.width / 2, 0);
-          ctx.lineTo(canvas.width / 2, canvas.height);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(canvas.width / 2, canvas.height / 2, 73, 0, 2 * Math.PI, false);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(canvas.width / 2, canvas.height / 2, 2, 0, 2 * Math.PI, false);
-          ctx.fill();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.rect(0, (canvas.height - 322) / 2, 132, 322);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.rect(0, (canvas.height - 146) / 2, 44, 146);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.moveTo(1, (canvas.height / 2) - 22);
-          ctx.lineTo(1, (canvas.height / 2) + 22);
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.closePath();
-          ctx.lineWidth = 1;
-
-          ctx.beginPath();
-          ctx.arc(88, canvas.height / 2, 1, 0, 2 * Math.PI, true);
-          ctx.fill();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(88, canvas.height / 2, 73, 0.29 * Math.PI, 1.71 * Math.PI, true);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.rect(canvas.width - 132, (canvas.height - 322) / 2, 132, 322);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.rect(canvas.width - 44, (canvas.height - 146) / 2, 44, 146);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.moveTo(canvas.width - 1, (canvas.height / 2) - 22);
-          ctx.lineTo(canvas.width - 1, (canvas.height / 2) + 22);
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.closePath();
-          ctx.lineWidth = 1;
-
-          ctx.beginPath();
-          ctx.arc(canvas.width - 88, canvas.height / 2, 1, 0, 2 * Math.PI, true);
-          ctx.fill();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(canvas.width - 88, canvas.height / 2, 73, 0.71 * Math.PI, 1.29 * Math.PI, false);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(0, 0, 8, 0, 0.5 * Math.PI, false);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(0, canvas.height, 8, 0, 2 * Math.PI, true);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(canvas.width, 0, 8, 0.5 * Math.PI, 1 * Math.PI, false);
-          ctx.stroke();
-          ctx.closePath();
-
-          ctx.beginPath();
-          ctx.arc(canvas.width, canvas.height, 8, 1 * Math.PI, 1.5 * Math.PI, false);
-          ctx.stroke();
-          ctx.closePath();
-        }
-      };
-
-      class Ball {
-        x: number = 0;
-        y: number = 0;
-        move(): void {
-          const coord = latLonToCanvas(_serial_out.ball.lat, _serial_out.ball.lon, pitch.center, canvas);
-          this.x = coord.x;
-          this.y = coord.y;
-          this.draw();
-        }
-        draw(): void {
-          if (!ctx) return;
-          ctx.beginPath();
-          ctx.arc(this.x, this.y, 3, 0, 2 * Math.PI, false);
-          ctx.fillStyle = "#FFF";
-          ctx.fill();
-          ctx.strokeStyle = "#000";
-          ctx.stroke();
-          ctx.closePath();
-        }
-      }
-
-      class Player {
-        team: number;
-        id: number;
-        pitch: typeof pitch;
-        x: number = 0;
-        y: number = 0;
-        constructor(team: number, id: number) {
-          this.team = team;
-          this.id = id;
-          this.pitch = pitch;
-        }
-
-        update(): void {
-          const playerData = _serial_out.players.find(p => p.id === this.id && p.team === this.team);
-          if (playerData) {
-            const coord = latLonToCanvas(playerData.lat, playerData.lon, this.pitch.center, canvas);
-            this.x = coord.x;
-            this.y = coord.y;
-            this.draw();
-          }
-        }
-
-        draw(): void {
-          if (!ctx) return;
-          ctx.beginPath();
-          ctx.arc(this.x, this.y, 5, 0, 2 * Math.PI, false);
-          ctx.fillStyle = (this.team === 0) ? "#00F" : "#F00";
-          ctx.fill();
-          ctx.strokeStyle = "#000";
-          ctx.stroke();
-          ctx.closePath();
-        }
-      }
-
-      type type_pitch = typeof pitch;
-
-      class Goal {
-        corners: { lat: number; lon: number }[];
-        pitch: type_pitch;
-        constructor(corners: { lat: number; lon: number }[], pitch: type_pitch) {
-          this.corners = corners;
-          this.pitch = pitch;
-        }
-
-        draw(): void {
-          if (!ctx) return;
-          ctx.beginPath();
-          const startCoord = latLonToCanvas(this.corners[0].lat, this.corners[0].lon, this.pitch.center, canvas);
-          ctx.moveTo(startCoord.x, startCoord.y);
-          for (let i = 1; i < this.corners.length; i++) {
-            const coord = latLonToCanvas(this.corners[i].lat, this.corners[i].lon, this.pitch.center, canvas);
-            ctx.lineTo(coord.x, coord.y);
-          }
-          ctx.closePath();
-          ctx.strokeStyle = "#FFF";
-          ctx.stroke();
-        }
-      }
-
-      function drawField() {
-        pitch.draw();
-
-        const players: Player[] = [];
-        for (let i = 0; i < _serial_out.players.length; i++) {
-          players.push(new Player(_serial_out.players[i].team, _serial_out.players[i].id));
-        }
-
-        const ball = new Ball();
-
-        const goals: Goal[] = [];
-
-        for (let i = 0; i < _serial_out.goals.length; i++) {
-          goals.push(new Goal(_serial_out.goals[i].corners, pitch));
-        }
-
-        ball.move();
-        players.forEach(player => player.update());
-        // Comment out the rendering of goals
-        // goals.forEach(goal => goal.draw());
-      }
-
-      function updateField() {
-        const intervalId = setInterval(() => {
-          if (connected) {
-            drawField();
-          } else {
-            clearInterval(intervalId);
-          }
-        }, 1000);
-      }
-
-      updateField();
-    }
-  }
-
-  async function quit(): Promise<void> {
-    console.log("quit");
-    await exit(0);
-  }
-
-  function update_terminal(): void {
-    if (connected) {
-      current_port?.opened_port?.read();
-    }
-  }
-
-  function create_serial_listener(): void {
-    console.log("Reading...");
-    listen(`plugin-serialport-read-${current_port?.path}`, (event: { payload: unknown }) => {
-      const payload = event.payload as { data: number[] };
-      const str = String.fromCharCode.apply(null, payload.data);
-      const cleanStr = str.replace(/(\r\n|\n|\r)/gm, "");
-      parse_serial_data(cleanStr);
-      serial_out.push(cleanStr + " ");
-      console.log(serial_out);
-      terminal.scrollTop = terminal.scrollHeight;
-    }).then(unlistener => {
-      unlisten = unlistener;
-    });
-  }
-
-  // Function to simulate receiving serial data for testing
-  function simulate_serial_data(): void {
-    const mockData = `
-      player 0 1 30.5 50.5
-      player 1 2 40.5 60.5
-      ball 35.5 55.5
-      goal -5 -5 5 -5 5 5 -5 5
-      goal -5 105 5 105 5 115 -5 115
-    `;
-    parse_serial_data(mockData);
-    render_field();
-  }
-
-  update_dynamic();
-
+  onMount(() => {
+    requestAnimationFrame(animate); // Start the animation loop after the component has mounted
+  });
 </script>
 
 {#if !connected}
@@ -437,25 +475,7 @@
         <Card href="/" size="xl" padding="xl" class="min-w-max mb-5 mt-3">
           <h5 class="mb-2 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Available Connection</h5>
           <p class="mb-3 font-normal text-gray-700 dark:text-gray-400 leading-tight">Port: {port}</p>
-          <Button class="w-fit" on:click={() => { 
-            if (port === "Example Connection") {
-              current_port = { path: port, baudRate: 9600, opened_port: null }; 
-              connected = true; 
-              setTimeout(() => { 
-                simulate_serial_data(); 
-                render_field(); 
-                update_terminal(); 
-              }, 1000);
-            } else {
-              current_port = connect({ path: port, baudRate: 9600, opened_port: null }, true); 
-              connected = true; 
-              setTimeout(() => { 
-                create_serial_listener(); 
-                render_field(); 
-                update_terminal(); 
-              }, 1000);
-            }
-          }}>
+          <Button class="w-fit" on:click={() => connect(port)}>
             Read Serial <ArrowRightOutline class="w-3.5 h-3.5 ml-2 text-white" />
           </Button>
         </Card>
@@ -474,16 +494,16 @@
 
 {#if connected}
   <div class="w-[calc(100%-2rem)] center-margin">
-    <h1 class="full-width center-margin text-center">Current connected port: {current_port?.path}</h1>
+    <h1 class="full-width center-margin text-center">Current connected port: {current_port?.path || "Example Connection"}</h1>
     <br />
     <canvas bind:this={canvas} class="canvas center-margin" width="800" height="518"></canvas>
     <br />
     <div bind:this={terminal} class="terminal center-margin">
-      {serial_out.join(' ')}
+      {JSON.stringify(serial_out, null, 2)}
     </div>
     <br />
     <ButtonGroup divClass="full-width" size="xl">
-      <Button on:click={() => close_port(current_port)} class="full-width">Disconnect</Button>
+      <Button on:click={() => { connected = false; if (current_port) current_port.close(); }} class="full-width">Disconnect</Button>
     </ButtonGroup>
   </div>
 {/if}

@@ -6,6 +6,6 @@
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_serialport::init())
-       .run(tauri::generate_context![])
-       .expect("error while running tauri application");
+        .run(tauri::generate_context![])
+        .expect("error while running tauri application");
 }
